@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Client-Side File Encryptor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fc;
+        }
+        .container {
+            max-width: 900px;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 flex justify-center min-h-screen">
+
+<div class="container w-full bg-white shadow-2xl rounded-xl p-6 md:p-10 border border-gray-100 mt-10">
+    <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">
+        🔒 Secure Client-Side File Cryptography
+    </h1>
+    <p class="text-sm text-red-600 mb-8 p-3 bg-red-50 rounded-lg text-center font-semibold">
+        🚨 **Data Never Leaves Your Browser.** This app reads and processes your file locally. The key derivation is performed using PBKDF2 with 100,000 iterations for security.
+    </p>
+
+    <!-- Global Password Input -->
+    <div class="mb-8 p-4 bg-indigo-50 border border-indigo-200 rounded-lg shadow-inner">
+        <label for="password" class="block text-lg font-bold text-indigo-700 mb-2">
+            Master Password
+        </label>
+        <input type="password" id="password" class="w-full border-2 border-indigo-300 rounded-lg p-3 text-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150" placeholder="Enter a strong, memorable password" />
+        <p id="password-help" class="text-sm text-indigo-600 mt-2">
+            **Remember this password!** It is the *only* thing that can unlock your file.
+        </p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Encryption Section -->
+        <div class="space-y-4 p-6 bg-gray-50 rounded-lg shadow-md border-l-4 border-indigo-500">
+            <h2 class="text-xl font-semibold text-indigo-700">Encrypt File</h2>
+            <p class="text-sm text-gray-600">Select any file (e.g., your CSV). The encrypted output will have the generic extension **.securevault**.</p>
+            
+            <input type="file" id="encFile" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"/>
+            
+            <button onclick="handleEncryption()" class="w-full py-3 px-4 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-200 shadow-lg shadow-indigo-300 disabled:opacity-50" id="encButton">
+                Encrypt File
+            </button>
+            <div id="encStatus" class="text-center font-medium"></div>
+        </div>
+
+        <!-- Decryption Section -->
+        <div class="space-y-4 p-6 bg-gray-50 rounded-lg shadow-md border-l-4 border-green-500">
+            <h2 class="text-xl font-semibold text-green-700">Decrypt File</h2>
+            <p class="text-sm text-gray-600">Select the encrypted file (with the **.securevault** extension).</p>
+
+            <input type="file" id="decFile" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100 cursor-pointer"/>
+            
+            <button onclick="handleDecryption()" class="w-full py-3 px-4 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition duration-200 shadow-lg shadow-green-300 disabled:opacity-50" id="decButton">
+                Decrypt File
+            </button>
+            <div id="decStatus" class="text-center font-medium"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Cryptographic Constants & Helpers ---
+
+    const ITERATIONS = 100000;
+    const AES_ALGORITHM = { name: "AES-GCM", length: 256 };
+    const KDF_ALGORITHM = {
+        name: "PBKDF2",
+        hash: "SHA-256",
+        iterations: ITERATIONS
+    };
+    const IV_LENGTH = 12; // AES-GCM recommended IV length
+
+    /**
+     * Converts an ArrayBuffer to a Base64 string for storage in the output file.
+     * @param {ArrayBuffer} buffer - The buffer.
+     * @returns {string}
+     */
+    function bufferToBase64(buffer) {
+        let binary = '';
+        const bytes = new Uint8Array(buffer);
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+    }
+
+    /**
+     * Converts a Base64 string back to an ArrayBuffer.
+     * @param {string} base64 - The base64 string.
+     * @returns {ArrayBuffer}
+     */
+    function base64ToBuffer(base64) {
+        const binary_string = atob(base64);
+        const len = binary_string.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binary_string.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    /**
+     * Derives a cryptographic key from a user password and a salt using PBKDF2.
+     * @param {string} password - The user's secret password.
+     * @param {Uint8Array} salt - A unique, random salt value.
+     * @returns {Promise<CryptoKey>} - The derived AES-GCM key.
+     */
+    async function getKeyFromPassword(password, salt) {
+        const passwordBuffer = new TextEncoder().encode(password);
+        
+        const baseKey = await crypto.subtle.importKey(
+            "raw",
+            passwordBuffer,
+            "PBKDF2",
+            false,
+            ["deriveKey"]
+        );
+
+        const kdfParams = { ...KDF_ALGORITHM, salt: salt };
+
+        const key = await crypto.subtle.deriveKey(
+            kdfParams,
+            baseKey,
+            AES_ALGORITHM,
+            true,
+            ["encrypt", "decrypt"]
+        );
+        return key;
+    }
+
+    /**
+     * Creates a downloadable file link.
+     * @param {ArrayBuffer} dataBuffer - The content of the file.
+     * @param {string} filename - The name of the file.
+     */
+    function downloadFile(dataBuffer, filename) {
+        const blob = new Blob([dataBuffer], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    // --- Encryption Handler ---
+
+    async function handleEncryption() {
+        const password = document.getElementById('password').value;
+        const fileInput = document.getElementById('encFile');
+        const statusElement = document.getElementById('encStatus');
+        const file = fileInput.files[0];
+
+        if (!password || !file) {
+            statusElement.className = 'text-red-600 mt-2';
+            statusElement.textContent = 'Please select a file and enter a password.';
+            return;
+        }
+
+        statusElement.className = 'text-indigo-600 mt-2';
+        statusElement.textContent = 'Processing...';
+        document.getElementById('encButton').disabled = true;
+
+        try {
+            // 1. Read file content as ArrayBuffer (raw binary data)
+            const fileDataBuffer = await file.arrayBuffer();
+
+            // 2. Generate Salt and Key
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const key = await getKeyFromPassword(password, salt);
+            
+            // 3. Generate IV
+            const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+            
+            // 4. Encrypt the data
+            const encryptedData = await crypto.subtle.encrypt(
+                { name: "AES-GCM", iv: iv },
+                key,
+                fileDataBuffer
+            );
+
+            // 5. Package the data (Salt, IV, Ciphertext) into a single secure JSON object
+            const encryptionPackage = {
+                v: 1, // Versioning
+                salt: bufferToBase64(salt.buffer),
+                iv: bufferToBase64(iv.buffer),
+                ct: bufferToBase64(encryptedData)
+            };
+
+            const jsonString = JSON.stringify(encryptionPackage);
+            const outputBuffer = new TextEncoder().encode(jsonString);
+
+            // 6. Download the secure file (using the generic extension)
+            const outputFilename = file.name + ".securevault";
+            downloadFile(outputBuffer, outputFilename);
+
+            statusElement.className = 'text-green-600 mt-2';
+            statusElement.textContent = `✅ File encrypted and downloaded as ${outputFilename}.`;
+
+        } catch (error) {
+            console.error("Encryption failed:", error);
+            statusElement.className = 'text-red-600 mt-2';
+            statusElement.textContent = `❌ Encryption failed. Error: ${error.message}.`;
+        } finally {
+            document.getElementById('encButton').disabled = false;
+        }
+    }
+
+    // --- Decryption Handler ---
+
+    async function handleDecryption() {
+        const password = document.getElementById('password').value;
+        const fileInput = document.getElementById('decFile');
+        const statusElement = document.getElementById('decStatus');
+        const file = fileInput.files[0];
+
+        if (!password || !file) {
+            statusElement.className = 'text-red-600 mt-2';
+            statusElement.textContent = 'Please select the encrypted file and enter the password.';
+            return;
+        }
+
+        statusElement.className = 'text-green-600 mt-2';
+        statusElement.textContent = 'Processing...';
+        document.getElementById('decButton').disabled = true;
+
+        try {
+            // 1. Read the encrypted file content (JSON string)
+            const fileDataBuffer = await file.arrayBuffer();
+            const jsonString = new TextDecoder().decode(fileDataBuffer);
+
+            // 2. Parse the secure package
+            const encryptionPackage = JSON.parse(jsonString);
+
+            if (encryptionPackage.v !== 1 || !encryptionPackage.salt || !encryptionPackage.iv || !encryptionPackage.ct) {
+                throw new Error("Invalid file format. This may not be a .securevault file.");
+            }
+
+            const salt = new Uint8Array(base64ToBuffer(encryptionPackage.salt));
+            const iv = new Uint8Array(base64ToBuffer(encryptionPackage.iv));
+            const ciphertext = base64ToBuffer(encryptionPackage.ct);
+            
+            // 3. Derive the Key using the password and the stored salt
+            const key = await getKeyFromPassword(password, salt);
+            
+            // 4. Decrypt the data
+            const decryptedData = await crypto.subtle.decrypt(
+                { name: "AES-GCM", iv: iv },
+                key,
+                ciphertext
+            );
+            
+            // 5. Determine output filename (remove .securevault and append .decrypted)
+            let outputFilename = file.name;
+            if (outputFilename.endsWith(".securevault")) {
+                outputFilename = outputFilename.slice(0, -".securevault".length);
+            }
+            outputFilename += ".decrypted";
+
+            // 6. Download the decrypted file
+            downloadFile(decryptedData, outputFilename);
+
+            statusElement.className = 'text-green-600 mt-2';
+            statusElement.textContent = `✅ File decrypted and downloaded as ${outputFilename}.`;
+
+        } catch (error) {
+            console.error("Decryption failed:", error);
+            statusElement.className = 'text-red-600 mt-2';
+            // Specific error message for crypto failure (bad password/data)
+            let displayError = (error.name === 'OperationError' || error.message.includes("Invalid file format"))
+                ? "Invalid Password or Corrupt File Data."
+                : `Error: ${error.message}`;
+            
+            statusElement.textContent = `❌ Decryption failed. ${displayError}`;
+        } finally {
+            document.getElementById('decButton').disabled = false;
+        }
+    }
+</script>
+
+</body>
+</html>
